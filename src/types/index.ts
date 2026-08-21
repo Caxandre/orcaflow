@@ -15,5 +15,7 @@ export interface Quote {
 export interface QuotePayload { client_id: number; status: QuoteStatus; discount_type: DiscountType; discount_value: number; notes: string | null; valid_until: string; items: QuoteItem[] }
 export interface Pagination { page: number; limit: number; total: number; totalPages: number }
 export interface Paginated<T> { items: T[]; pagination: Pagination }
-export interface ApiResponse<T> { success: boolean; message: string; data: T; errors?: Array<{ field?: string; message: string }> }
+export interface ApiResponse<T> { success: true; message: string; data: T }
+export interface ApiFieldError { field: string; message: string }
+export interface ApiError { success: false; message: string; errors: ApiFieldError[] }
 export interface DashboardData { total_quotes: number; sent_quotes: number; approved_quotes: number; rejected_quotes: number; total_value: number; approved_value: number; recent_quotes: Quote[] }
