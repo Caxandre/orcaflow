@@ -1,5 +1,5 @@
 import { ArrowLeft, CalendarDays, Download, Mail, MessageCircle, Pencil, Phone, UserRound } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { StatusBadge } from '../components/StatusBadge';
@@ -17,9 +17,18 @@ const statusLabel = { draft: 'Rascunho', sent: 'Enviado', approved: 'Aprovado', 
 
 export function QuoteDetailsPage() {
   const { id } = useParams(); const [quote, setQuote] = useState<Quote | null>(null); const [pdfBusy, setPdfBusy] = useState(false);
-  useEffect(() => { api.get<ApiResponse<Quote>>(`/quotes/${id}`).then((r) => setQuote(r.data.data)).catch((e) => showApiError(e)); }, [id]);
+  const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
+  const load = useCallback(() => {
+    setStatus('loading');
+    api.get<ApiResponse<Quote>>(`/quotes/${id}`)
+      .then((r) => { setQuote(r.data.data); setStatus('success'); })
+      .catch((e) => { showApiError(e); setStatus('error'); });
+  }, [id]);
+  useEffect(() => { load(); }, [load]);
   const pdf = async (share = false) => { if (!quote) return; setPdfBusy(true); try { const r = await api.post<ApiResponse<{ url: string }>>(`/quotes/${quote.id}/pdf`); if (share) window.open(whatsAppUrl(quote, r.data.data.url), '_blank', 'noopener,noreferrer'); else window.open(r.data.data.url, '_blank', 'noopener,noreferrer'); toast.success('PDF gerado com sucesso.'); } catch (e) { showApiError(e); } finally { setPdfBusy(false); } };
-  if (!quote) return <Loading label="Carregando proposta..." />;
+  if (status === 'loading') return <Loading label="Carregando proposta..." />;
+  if (status === 'error') return <div className="grid min-h-64 place-items-center px-6 text-center"><div><h3 className="font-semibold text-slate-800">Não foi possível carregar o orçamento.</h3><p className="mt-1 text-sm text-slate-500">Tente novamente em alguns instantes.</p><div className="mt-4"><Button variant="primary" onClick={load}>Tentar novamente</Button></div></div></div>;
+  if (!quote) return null;
   return <>
     <PageHeader eyebrow="Detalhes da proposta" title={quote.quote_number} description={`Criado em ${formatDate(quote.created_at)} · Atualizado em ${formatDate(quote.updated_at)}`} action={<div className="flex flex-wrap gap-2"><ButtonLink to="/orcamentos" variant="secondary"><ArrowLeft size={17} />Voltar</ButtonLink><ButtonLink to={`/orcamentos/${quote.id}/editar`} variant="secondary"><Pencil size={17} />Editar</ButtonLink><Button variant="primary" onClick={() => void pdf()} disabled={pdfBusy}><Download size={17} />PDF</Button></div>} />
     <div className="grid gap-5 xl:grid-cols-[1fr_340px]"><div className="space-y-5"><Surface as="section" className="overflow-hidden"><div className="flex flex-col gap-5 border-b border-slate-100 bg-gradient-to-r from-blue-50 to-white p-6 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-xs font-bold uppercase tracking-wider text-brand-600">Proposta para</p><h2 className="mt-1 font-serif text-2xl text-navy">{quote.client_name}</h2>{quote.client_company && <p className="mt-1 text-sm text-slate-500">{quote.client_company}</p>}</div><StatusBadge status={quote.status} /></div><div className="grid gap-4 p-6 sm:grid-cols-3"><Info Icon={UserRound} label="Cliente" value={quote.client_name ?? ''} /><Info Icon={Mail} label="E-mail" value={quote.client_email ?? '—'} /><Info Icon={Phone} label="Telefone" value={quote.client_phone ?? '—'} /></div></Surface>

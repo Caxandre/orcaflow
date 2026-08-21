@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { ArrowLeft, Calculator, Plus, Save, Trash2 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useFieldArray, useForm, useWatch } from 'react-hook-form';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -27,12 +27,20 @@ const futureDate = () => new Date(Date.now() + 15 * 86400000).toISOString().slic
 const blank: FormData = { client_id: 0, status: 'draft', discount_type: 'fixed', discount_value: 0, notes: '', valid_until: futureDate(), items: [] };
 
 export function QuoteFormPage() {
-  const { id } = useParams(); const navigate = useNavigate(); const [clients, setClients] = useState<Client[]>([]); const [products, setProducts] = useState<Product[]>([]); const [clientSearch, setClientSearch] = useState(''); const [productSearch, setProductSearch] = useState(''); const [loading, setLoading] = useState(Boolean(id));
+  const { id } = useParams(); const navigate = useNavigate(); const [clients, setClients] = useState<Client[]>([]); const [products, setProducts] = useState<Product[]>([]); const [clientSearch, setClientSearch] = useState(''); const [productSearch, setProductSearch] = useState('');
+  const [loadStatus, setLoadStatus] = useState<'loading' | 'success' | 'error'>(id ? 'loading' : 'success');
   const { control, register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<FormData>({ resolver: zodResolver(schema), defaultValues: blank });
   const { fields, append, remove } = useFieldArray({ control, name: 'items' });
   const values = useWatch({ control });
   useEffect(() => { Promise.all([api.get<ApiResponse<Paginated<Client>>>('/clients', { params: { limit: 100 } }), api.get<ApiResponse<Paginated<Product>>>('/products', { params: { limit: 100, status: 'active' } })]).then(([c, p]) => { setClients(c.data.data.items); setProducts(p.data.data.items); }).catch((e) => showApiError(e)); }, []);
-  useEffect(() => { if (!id) return; api.get<ApiResponse<Quote>>(`/quotes/${id}`).then((r) => { const q = r.data.data; reset({ client_id: q.client_id, status: q.status, discount_type: q.discount_type, discount_value: Number(q.discount_value), notes: q.notes ?? '', valid_until: q.valid_until.slice(0, 10), items: q.items?.map((item) => ({ product_id: item.product_id, item_name: item.item_name, item_description: item.item_description ?? '', quantity: Number(item.quantity), unit_price: Number(item.unit_price) })) ?? [] }); }).catch((e) => showApiError(e)).finally(() => setLoading(false)); }, [id, reset]);
+  const loadQuoteForEdit = useCallback(() => {
+    if (!id) return;
+    setLoadStatus('loading');
+    api.get<ApiResponse<Quote>>(`/quotes/${id}`)
+      .then((r) => { const q = r.data.data; reset({ client_id: q.client_id, status: q.status, discount_type: q.discount_type, discount_value: Number(q.discount_value), notes: q.notes ?? '', valid_until: q.valid_until.slice(0, 10), items: q.items?.map((item) => ({ product_id: item.product_id, item_name: item.item_name, item_description: item.item_description ?? '', quantity: Number(item.quantity), unit_price: Number(item.unit_price) })) ?? [] }); setLoadStatus('success'); })
+      .catch((e) => { showApiError(e); setLoadStatus('error'); });
+  }, [id, reset]);
+  useEffect(() => { loadQuoteForEdit(); }, [loadQuoteForEdit]);
   const subtotal = useMemo(() => (values.items ?? []).reduce((sum, item) => sum + (Number(item?.quantity) || 0) * (Number(item?.unit_price) || 0), 0), [values.items]);
   const discount = values.discount_type === 'percentage' ? subtotal * ((Number(values.discount_value) || 0) / 100) : Number(values.discount_value) || 0;
   const total = Math.max(0, subtotal - Math.min(subtotal, discount));
@@ -40,7 +48,8 @@ export function QuoteFormPage() {
   const filteredProducts = products.filter((p) => p.name.toLowerCase().includes(productSearch.toLowerCase()));
   const addProduct = (product: Product) => append({ product_id: product.id, item_name: product.name, item_description: product.description ?? '', quantity: 1, unit_price: Number(product.unit_price) });
   const submit = async (data: FormData) => { try { const payload: QuotePayload = { ...data, notes: data.notes || null }; const r = id ? await api.put<ApiResponse<Quote>>(`/quotes/${id}`, payload) : await api.post<ApiResponse<Quote>>('/quotes', payload); toast.success(id ? 'Orçamento atualizado.' : 'Orçamento criado.'); navigate(`/orcamentos/${r.data.data.id}`); } catch (e) { showApiError(e); } };
-  if (loading) return <Loading label="Abrindo orçamento..." />;
+  if (loadStatus === 'loading') return <Loading label="Abrindo orçamento..." />;
+  if (loadStatus === 'error') return <div className="grid min-h-64 place-items-center px-6 text-center"><div><h3 className="font-semibold text-slate-800">Não foi possível carregar o orçamento para edição.</h3><p className="mt-1 text-sm text-slate-500">Tente novamente em alguns instantes.</p><div className="mt-4"><Button variant="primary" onClick={loadQuoteForEdit}>Tentar novamente</Button></div></div></div>;
   return <>
     <PageHeader eyebrow={id ? 'Edição' : 'Nova oportunidade'} title={id ? 'Editar orçamento' : 'Criar orçamento'} description="Monte uma proposta clara. Os totais serão conferidos novamente pelo servidor." action={<ButtonLink to="/orcamentos" variant="secondary"><ArrowLeft size={17} />Voltar</ButtonLink>} />
     <form onSubmit={handleSubmit(submit)} className="grid gap-5 xl:grid-cols-[1fr_340px]">

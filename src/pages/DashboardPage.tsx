@@ -1,7 +1,8 @@
 import { ArrowRight, BadgeCheck, Banknote, FilePlus2, FileText, Send, TrendingUp, XCircle } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { StatusBadge } from '../components/StatusBadge';
+import { Button } from '../design-system/Button';
 import { ButtonLink } from '../design-system/ButtonLink';
 import { EmptyState } from '../design-system/EmptyState';
 import { Loading } from '../design-system/Loading';
@@ -22,8 +23,17 @@ const cards = [
 
 export function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
-  useEffect(() => { api.get<ApiResponse<DashboardData>>('/dashboard').then((r) => setData(r.data.data)).catch((e) => showApiError(e)); }, []);
-  if (!data) return <Loading />;
+  const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
+  const load = useCallback(() => {
+    setStatus('loading');
+    api.get<ApiResponse<DashboardData>>('/dashboard')
+      .then((r) => { setData(r.data.data); setStatus('success'); })
+      .catch((e) => { showApiError(e); setStatus('error'); });
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  if (status === 'loading') return <Loading />;
+  if (status === 'error') return <div className="grid min-h-64 place-items-center px-6 text-center"><div><h3 className="font-semibold text-slate-800">Não foi possível carregar o dashboard.</h3><p className="mt-1 text-sm text-slate-500">Tente novamente em alguns instantes.</p><div className="mt-4"><Button variant="primary" onClick={load}>Tentar novamente</Button></div></div></div>;
+  if (!data) return null;
   const conversion = data.total_quotes ? Math.round((data.approved_quotes / data.total_quotes) * 100) : 0;
   return <>
     <PageHeader eyebrow="Visão geral" title="Seu negócio, em movimento" description="Acompanhe os números que importam e mantenha cada proposta avançando." action={<ButtonLink to="/orcamentos/novo" variant="primary"><FilePlus2 size={18} />Novo orçamento</ButtonLink>} />
