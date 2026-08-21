@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import type { AxiosResponse } from 'axios';
@@ -54,5 +54,52 @@ describe('QuoteDetailsPage', () => {
 
     expect(await screen.findByText('ORC-0042')).toBeInTheDocument();
     expect(getSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('cliente sem telefone: ação de WhatsApp fica desabilitada e não chama a API', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api, 'get').mockResolvedValueOnce({ data: { data: quote } } as AxiosResponse<ApiResponse<Quote>>);
+    const postSpy = vi.spyOn(api, 'post');
+
+    render(
+      <MemoryRouter initialEntries={['/orcamentos/42']}>
+        <Routes>
+          <Route path="/orcamentos/:id" element={<QuoteDetailsPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const button = await screen.findByRole('button', { name: 'Enviar pelo WhatsApp' });
+    expect(button).toBeDisabled();
+
+    await user.click(button);
+
+    expect(postSpy).not.toHaveBeenCalled();
+  });
+
+  it('cliente com telefone: ação de WhatsApp fica disponível e aciona o mesmo fluxo existente', async () => {
+    const user = userEvent.setup();
+    const quoteWithPhone: Quote = { ...quote, client_phone: '11999999999' };
+    vi.spyOn(api, 'get').mockResolvedValueOnce({ data: { data: quoteWithPhone } } as AxiosResponse<ApiResponse<Quote>>);
+    const postSpy = vi
+      .spyOn(api, 'post')
+      .mockResolvedValueOnce({ data: { data: { url: 'https://example.com/quote.pdf' } } } as AxiosResponse<ApiResponse<{ url: string }>>);
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+
+    render(
+      <MemoryRouter initialEntries={['/orcamentos/42']}>
+        <Routes>
+          <Route path="/orcamentos/:id" element={<QuoteDetailsPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const button = await screen.findByRole('button', { name: 'Enviar pelo WhatsApp' });
+    expect(button).toBeEnabled();
+
+    await user.click(button);
+
+    await waitFor(() => expect(postSpy).toHaveBeenCalledWith('/quotes/42/pdf'));
+    expect(openSpy).toHaveBeenCalledWith(expect.stringContaining('wa.me'), '_blank', 'noopener,noreferrer');
   });
 });
