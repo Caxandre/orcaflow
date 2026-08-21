@@ -19,7 +19,7 @@ type FormData = z.infer<typeof schema>;
 export function LoginPage() {
   const { user, login } = useAuth();
   const [show, setShow] = useState(false);
-  const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<FormData>({ resolver: zodResolver(schema), defaultValues: { email: 'admin@crm.local', password: 'Admin@123' } });
+  const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<FormData>({ resolver: zodResolver(schema), defaultValues: { email: '', password: '' } });
   if (user) return <Navigate to="/" replace />;
   const submit = async (data: FormData) => {
     try { await login(data.email, data.password); toast.success('Bem-vindo de volta!'); }
@@ -40,7 +40,6 @@ export function LoginPage() {
           <div><Label htmlFor="password">Senha</Label><div className="relative"><LockKeyhole className="absolute left-3.5 top-3.5 text-slate-400" size={18} /><Input id="password" autoComplete="current-password" type={show ? 'text' : 'password'} className="px-11" placeholder="Sua senha" aria-invalid={errors.password ? true : undefined} aria-describedby={errors.password ? 'password-error' : undefined} {...register('password')} /><button type="button" className="absolute right-2 top-2 rounded-lg p-2 text-slate-400 hover:bg-slate-50" onClick={() => setShow(!show)} aria-label={show ? 'Ocultar senha' : 'Mostrar senha'}>{show ? <EyeOff size={18} /> : <Eye size={18} />}</button></div>{errors.password && <FieldError id="password-error">{errors.password.message}</FieldError>}</div>
           <Button type="submit" className="w-full py-3" loading={isSubmitting}>{isSubmitting ? 'Entrando...' : <>Entrar no OrçaFlow <ArrowRight size={18} /></>}</Button>
         </form>
-        <div className="mt-7 rounded-xl bg-slate-50 p-4 text-xs leading-5 text-slate-500"><strong className="text-slate-700">Acesso inicial:</strong> admin@crm.local · Admin@123<br />Altere a senha após o primeiro acesso em produção.</div>
       </div></section>
     </div>
   </main>;
