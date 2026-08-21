@@ -19,7 +19,7 @@ import { SearchInput } from '../design-system/SearchInput';
 import { Surface } from '../design-system/Surface';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../design-system/Table';
 import { Textarea } from '../design-system/Textarea';
-import { api, showApiError } from '../services/api';
+import { api, getApiError, showApiError } from '../services/api';
 import type { ApiResponse, Client, Paginated, Pagination as PaginationType, Quote } from '../types';
 import { formatDate, formatMoney, phoneDigits } from '../utils/format';
 
@@ -30,17 +30,41 @@ const schema = z.object({
 type FormData = z.infer<typeof schema>;
 const emptyPagination = { page: 1, limit: 10, total: 0, totalPages: 0 };
 
+const knownFields = ['name', 'email', 'phone', 'company', 'notes'] as const;
+type KnownField = (typeof knownFields)[number];
+const isKnownField = (field: string): field is KnownField => (knownFields as readonly string[]).includes(field);
+
 export function ClientsPage() {
   const [items, setItems] = useState<Client[]>([]);
   const [pageInfo, setPageInfo] = useState<PaginationType>(emptyPagination);
   const [page, setPage] = useState(1); const [search, setSearch] = useState(''); const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Client | null | undefined>(undefined); const [viewing, setViewing] = useState<Client | null>(null);
   const [history, setHistory] = useState<Quote[]>([]); const [deleting, setDeleting] = useState<Client | null>(null);
-  const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<FormData>({ resolver: zodResolver(schema) });
+  const { register, handleSubmit, reset, setError, formState: { errors, isSubmitting } } = useForm<FormData>({ resolver: zodResolver(schema) });
   const load = useCallback(async () => { setLoading(true); try { const r = await api.get<ApiResponse<Paginated<Client>>>('/clients', { params: { page, search } }); setItems(r.data.data.items); setPageInfo(r.data.data.pagination); } catch (e) { showApiError(e); } finally { setLoading(false); } }, [page, search]);
   useEffect(() => { void load(); }, [load]);
   const openForm = (client: Client | null) => { setEditing(client); reset(client ? { name: client.name, email: client.email, phone: client.phone, company: client.company ?? '', notes: client.notes ?? '' } : { name: '', email: '', phone: '', company: '', notes: '' }); };
-  const submit = async (data: FormData) => { try { if (editing) await api.put(`/clients/${editing.id}`, data); else await api.post('/clients', data); toast.success(editing ? 'Cliente atualizado.' : 'Cliente cadastrado.'); setEditing(undefined); await load(); } catch (e) { showApiError(e); } };
+  const submit = async (data: FormData) => {
+    try {
+      if (editing) await api.put(`/clients/${editing.id}`, data);
+      else await api.post('/clients', data);
+      toast.success(editing ? 'Cliente atualizado.' : 'Cliente cadastrado.');
+      setEditing(undefined);
+      await load();
+    } catch (e) {
+      const apiError = getApiError(e);
+      if (apiError && apiError.errors.length > 0) {
+        let allKnown = true;
+        for (const fieldError of apiError.errors) {
+          if (isKnownField(fieldError.field)) setError(fieldError.field, { type: 'server', message: fieldError.message });
+          else allKnown = false;
+        }
+        if (!allKnown) showApiError(e);
+      } else {
+        showApiError(e);
+      }
+    }
+  };
   const showDetails = async (client: Client) => { setViewing(client); setHistory([]); try { const r = await api.get<ApiResponse<Quote[]>>(`/clients/${client.id}/quotes`); setHistory(r.data.data); } catch (e) { showApiError(e); } };
   const remove = async () => { if (!deleting) return; try { await api.delete(`/clients/${deleting.id}`); toast.success('Cliente excluído.'); setDeleting(null); await load(); } catch (e) { showApiError(e); } };
   return <>

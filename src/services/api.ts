@@ -1,5 +1,6 @@
 import axios, { AxiosError } from 'axios';
 import { toast } from 'sonner';
+import type { ApiError } from '../types';
 
 export const TOKEN_KEY = 'crm_orcamentos_token';
 export const api = axios.create({ baseURL: import.meta.env.VITE_API_URL ?? 'http://localhost:3000/api', timeout: 20000 });
@@ -21,4 +22,22 @@ api.interceptors.response.use((response) => response, (error: AxiosError<{ messa
 export const showApiError = (error: unknown, fallback = 'Não foi possível concluir a operação.') => {
   if (axios.isAxiosError(error)) toast.error(error.response?.data?.message ?? fallback);
   else toast.error(fallback);
+};
+
+const isApiError = (value: unknown): value is ApiError =>
+  typeof value === 'object' &&
+  value !== null &&
+  'success' in value &&
+  value.success === false &&
+  'errors' in value &&
+  Array.isArray(value.errors);
+
+// Reconhece o formato de erro de validação/negócio do backend
+// ({ success: false, message, errors: [{ field, message }] }) sem `any`/casts
+// espalhados pelos consumidores. Só reconhece a forma; não decide o que fazer
+// com ela (toast, setError etc.) — essa decisão continua com quem chama.
+export const getApiError = (error: unknown): ApiError | undefined => {
+  if (!axios.isAxiosError(error)) return undefined;
+  const data = error.response?.data;
+  return isApiError(data) ? data : undefined;
 };
