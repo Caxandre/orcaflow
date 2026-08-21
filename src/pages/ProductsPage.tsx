@@ -21,7 +21,7 @@ import { Select } from '../design-system/Select';
 import { Surface } from '../design-system/Surface';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../design-system/Table';
 import { Textarea } from '../design-system/Textarea';
-import { api, showApiError } from '../services/api';
+import { api, getApiError, showApiError } from '../services/api';
 import type { ApiResponse, Paginated, Pagination as PaginationType, Product } from '../types';
 import { formatMoney } from '../utils/format';
 
@@ -30,15 +30,43 @@ type FormInput = z.input<typeof schema>;
 type FormOutput = z.output<typeof schema>;
 const blank: FormInput = { name: '', description: '', unit_price: 0, type: 'service', is_active: true };
 
+// Só `name`/`unit_price` têm apresentação visual de erro hoje (único par de
+// FormField que recebe `error=`). `description`/`type` usam FormField sem
+// `error=`, e `is_active` nem passa por FormField — setError nesses 3
+// ficaria oculto do usuário. Ver relatório da tarefa.
+const knownFields = ['name', 'unit_price'] as const;
+type KnownField = (typeof knownFields)[number];
+const isKnownField = (field: string): field is KnownField => (knownFields as readonly string[]).includes(field);
+
 export function ProductsPage() {
   const [items, setItems] = useState<Product[]>([]); const [pagination, setPagination] = useState<PaginationType>({ page: 1, limit: 10, total: 0, totalPages: 0 }); const [page, setPage] = useState(1);
   const [search, setSearch] = useState(''); const [type, setType] = useState(''); const [status, setStatus] = useState(''); const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Product | null | undefined>(undefined); const [deleting, setDeleting] = useState<Product | null>(null);
-  const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<FormInput, unknown, FormOutput>({ resolver: zodResolver(schema), defaultValues: blank });
+  const { register, handleSubmit, reset, setError, formState: { errors, isSubmitting } } = useForm<FormInput, unknown, FormOutput>({ resolver: zodResolver(schema), defaultValues: blank });
   const load = useCallback(async () => { setLoading(true); try { const r = await api.get<ApiResponse<Paginated<Product>>>('/products', { params: { page, search, type, status } }); setItems(r.data.data.items); setPagination(r.data.data.pagination); } catch (e) { showApiError(e); } finally { setLoading(false); } }, [page, search, type, status]);
   useEffect(() => { void load(); }, [load]);
   const openForm = (item: Product | null) => { setEditing(item); reset(item ? { name: item.name, description: item.description ?? '', unit_price: item.unit_price, type: item.type, is_active: Boolean(item.is_active) } : blank); };
-  const submit = async (data: FormOutput) => { try { if (editing) await api.put(`/products/${editing.id}`, data); else await api.post('/products', data); toast.success(editing ? 'Cadastro atualizado.' : 'Item cadastrado.'); setEditing(undefined); await load(); } catch (e) { showApiError(e); } };
+  const submit = async (data: FormOutput) => {
+    try {
+      if (editing) await api.put(`/products/${editing.id}`, data);
+      else await api.post('/products', data);
+      toast.success(editing ? 'Cadastro atualizado.' : 'Item cadastrado.');
+      setEditing(undefined);
+      await load();
+    } catch (e) {
+      const apiError = getApiError(e);
+      if (apiError && apiError.errors.length > 0) {
+        let allKnown = true;
+        for (const fieldError of apiError.errors) {
+          if (isKnownField(fieldError.field)) setError(fieldError.field, { type: 'server', message: fieldError.message });
+          else allKnown = false;
+        }
+        if (!allKnown) showApiError(e);
+      } else {
+        showApiError(e);
+      }
+    }
+  };
   const remove = async () => { if (!deleting) return; try { await api.delete(`/products/${deleting.id}`); toast.success('Item excluído.'); setDeleting(null); await load(); } catch (e) { showApiError(e); } };
   return <>
     <PageHeader eyebrow="Catálogo" title="Produtos e serviços" description="Mantenha preços organizados e monte propostas em poucos cliques." action={<Button variant="primary" onClick={() => openForm(null)}><Plus size={18} />Novo item</Button>} />
