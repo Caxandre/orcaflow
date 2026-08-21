@@ -1,0 +1,58 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import type { AxiosResponse } from 'axios';
+import { QuoteDetailsPage } from './QuoteDetailsPage';
+import { api } from '../services/api';
+import type { ApiResponse, Quote } from '../types';
+
+const quote: Quote = {
+  id: 42,
+  quote_number: 'ORC-0042',
+  client_id: 1,
+  client_name: 'Cliente Teste',
+  status: 'draft',
+  subtotal: 100,
+  discount_type: 'fixed',
+  discount_value: 0,
+  discount_amount: 0,
+  total: 100,
+  notes: null,
+  valid_until: '2026-09-01',
+  pdf_path: null,
+  created_at: '2026-08-01T12:00:00Z',
+  updated_at: '2026-08-01T12:00:00Z',
+  items: [],
+  history: [],
+};
+
+describe('QuoteDetailsPage', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('GET falho mostra erro; "Tentar novamente" refaz a chamada e mostra o orçamento após sucesso', async () => {
+    const user = userEvent.setup();
+    const getSpy = vi
+      .spyOn(api, 'get')
+      .mockRejectedValueOnce(new Error('network error'))
+      .mockResolvedValueOnce({ data: { data: quote } } as AxiosResponse<ApiResponse<Quote>>);
+
+    render(
+      <MemoryRouter initialEntries={['/orcamentos/42']}>
+        <Routes>
+          <Route path="/orcamentos/:id" element={<QuoteDetailsPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('Não foi possível carregar o orçamento.')).toBeInTheDocument();
+    expect(screen.queryByText('ORC-0042')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Tentar novamente' }));
+
+    expect(await screen.findByText('ORC-0042')).toBeInTheDocument();
+    expect(getSpy).toHaveBeenCalledTimes(2);
+  });
+});
