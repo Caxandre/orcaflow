@@ -1,11 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useParams } from 'react-router-dom';
 import type { AxiosResponse } from 'axios';
 import { QuotesPage } from './QuotesPage';
 import { api } from '../services/api';
 import type { ApiResponse, Client, Paginated, Quote } from '../types';
+
+function EditProbe() {
+  const { id } = useParams();
+  return <div>Editando orçamento {id}</div>;
+}
 
 const pagination = { page: 1, limit: 10, total: 1, totalPages: 1 };
 
@@ -114,5 +119,108 @@ describe('QuotesPage', () => {
     resolveDelete?.();
 
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  it('duplicar: bloqueia clique repetido na mesma linha enquanto o POST está pendente', async () => {
+    const user = userEvent.setup();
+    mockGet(quote);
+    let resolvePost: (() => void) | undefined;
+    const postSpy = vi.spyOn(api, 'post').mockReturnValue(
+      new Promise<AxiosResponse<ApiResponse<Quote>>>((resolve) => {
+        resolvePost = () => resolve({ data: { data: { ...quote, id: 99 } } } as AxiosResponse<ApiResponse<Quote>>);
+      }),
+    );
+
+    render(
+      <MemoryRouter>
+        <QuotesPage />
+      </MemoryRouter>,
+    );
+
+    const duplicateButton = await screen.findByRole('button', { name: 'Duplicar' });
+    await user.click(duplicateButton);
+
+    expect(duplicateButton).toBeDisabled();
+
+    await user.click(duplicateButton);
+
+    expect(postSpy).toHaveBeenCalledTimes(1);
+
+    resolvePost?.();
+  });
+
+  it('duplicar: libera o botão após erro, permitindo nova tentativa', async () => {
+    const user = userEvent.setup();
+    mockGet(quote);
+    const postSpy = vi.spyOn(api, 'post').mockRejectedValueOnce(new Error('network error'));
+
+    render(
+      <MemoryRouter>
+        <QuotesPage />
+      </MemoryRouter>,
+    );
+
+    const duplicateButton = await screen.findByRole('button', { name: 'Duplicar' });
+    await user.click(duplicateButton);
+
+    await waitFor(() => expect(duplicateButton).toBeEnabled());
+    expect(postSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('duplicar: em sucesso, cria a cópia e navega para a edição do novo orçamento', async () => {
+    const user = userEvent.setup();
+    mockGet(quote);
+    vi.spyOn(api, 'post').mockResolvedValueOnce({ data: { data: { ...quote, id: 99 } } } as AxiosResponse<ApiResponse<Quote>>);
+
+    render(
+      <MemoryRouter initialEntries={['/orcamentos']}>
+        <Routes>
+          <Route path="/orcamentos" element={<QuotesPage />} />
+          <Route path="/orcamentos/:id/editar" element={<EditProbe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await user.click(await screen.findByRole('button', { name: 'Duplicar' }));
+
+    expect(await screen.findByText('Editando orçamento 99')).toBeInTheDocument();
+  });
+
+  it('duplicar: enquanto uma linha está sendo duplicada, o botão de outra linha também fica desabilitado (busy global)', async () => {
+    const user = userEvent.setup();
+    const quoteB: Quote = { ...quote, id: 8, quote_number: 'ORC-0008' };
+    vi.spyOn(api, 'get').mockImplementation(((url: string) => {
+      if (url === '/quotes') {
+        return Promise.resolve({ data: { data: { items: [quote, quoteB], pagination } } } as AxiosResponse<
+          ApiResponse<Paginated<Quote>>
+        >);
+      }
+      if (url === '/clients') {
+        return Promise.resolve({ data: { data: { items: [] as Client[], pagination } } } as AxiosResponse<ApiResponse<Paginated<Client>>>);
+      }
+      return Promise.reject(new Error('unexpected url'));
+    }) as typeof api.get);
+    let resolvePost: (() => void) | undefined;
+    vi.spyOn(api, 'post').mockReturnValue(
+      new Promise<AxiosResponse<ApiResponse<Quote>>>((resolve) => {
+        resolvePost = () => resolve({ data: { data: { ...quote, id: 99 } } } as AxiosResponse<ApiResponse<Quote>>);
+      }),
+    );
+
+    render(
+      <MemoryRouter>
+        <QuotesPage />
+      </MemoryRouter>,
+    );
+
+    const duplicateButtons = await screen.findAllByRole('button', { name: 'Duplicar' });
+    expect(duplicateButtons).toHaveLength(2);
+
+    await user.click(duplicateButtons[0]);
+
+    expect(duplicateButtons[0]).toBeDisabled();
+    expect(duplicateButtons[1]).toBeDisabled();
+
+    resolvePost?.();
   });
 });
