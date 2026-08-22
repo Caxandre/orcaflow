@@ -90,4 +90,29 @@ describe('QuotesPage', () => {
     await waitFor(() => expect(postSpy).toHaveBeenCalledWith('/quotes/7/pdf'));
     expect(openSpy).toHaveBeenCalledWith(expect.stringContaining('wa.me'), '_blank', 'noopener,noreferrer');
   });
+
+  it('exclusão: botão fica desabilitado e mostra "Excluindo..." enquanto o DELETE está pendente; conclui normalmente ao resolver', async () => {
+    const user = userEvent.setup();
+    mockGet(quote);
+    let resolveDelete: (() => void) | undefined;
+    const deleteSpy = vi.spyOn(api, 'delete').mockReturnValue(
+      new Promise<AxiosResponse>((resolve) => { resolveDelete = () => resolve({} as AxiosResponse); }),
+    );
+
+    render(
+      <MemoryRouter>
+        <QuotesPage />
+      </MemoryRouter>,
+    );
+
+    await user.click(await screen.findByRole('button', { name: 'Excluir' }));
+    await user.click(await screen.findByRole('button', { name: 'Confirmar exclusão' }));
+
+    expect(await screen.findByRole('button', { name: 'Excluindo...' })).toBeDisabled();
+    expect(deleteSpy).toHaveBeenCalledTimes(1);
+
+    resolveDelete?.();
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
 });

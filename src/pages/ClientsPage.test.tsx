@@ -78,4 +78,36 @@ describe('ClientsPage', () => {
     await waitFor(() => expect(toastErrorSpy).toHaveBeenCalledWith('Verifique os dados informados.'));
     expect(screen.queryByText('Campo inesperado.')).not.toBeInTheDocument();
   });
+
+  it('exclusão: botão fica desabilitado e mostra "Excluindo..." enquanto o DELETE está pendente; conclui normalmente ao resolver', async () => {
+    const user = userEvent.setup();
+    const client: Client = {
+      id: 1,
+      name: 'Cliente Teste',
+      email: 'cliente@teste.com',
+      phone: '11999999999',
+      company: null,
+      notes: null,
+      created_at: '2026-08-01T12:00:00Z',
+      updated_at: '2026-08-01T12:00:00Z',
+    };
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: { data: { items: [client], pagination: { page: 1, limit: 10, total: 1, totalPages: 1 } } },
+    } as AxiosResponse<ApiResponse<Paginated<Client>>>);
+    let resolveDelete: (() => void) | undefined;
+    const deleteSpy = vi.spyOn(api, 'delete').mockReturnValue(
+      new Promise<AxiosResponse>((resolve) => { resolveDelete = () => resolve({} as AxiosResponse); }),
+    );
+
+    render(<ClientsPage />);
+    await user.click(await screen.findByRole('button', { name: 'Excluir' }));
+    await user.click(await screen.findByRole('button', { name: 'Confirmar exclusão' }));
+
+    expect(await screen.findByRole('button', { name: 'Excluindo...' })).toBeDisabled();
+    expect(deleteSpy).toHaveBeenCalledTimes(1);
+
+    resolveDelete?.();
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
 });

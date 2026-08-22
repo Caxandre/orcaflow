@@ -39,7 +39,7 @@ export function ClientsPage() {
   const [pageInfo, setPageInfo] = useState<PaginationType>(emptyPagination);
   const [page, setPage] = useState(1); const [search, setSearch] = useState(''); const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Client | null | undefined>(undefined); const [viewing, setViewing] = useState<Client | null>(null);
-  const [history, setHistory] = useState<Quote[]>([]); const [deleting, setDeleting] = useState<Client | null>(null);
+  const [history, setHistory] = useState<Quote[]>([]); const [deleting, setDeleting] = useState<Client | null>(null); const [deletingBusy, setDeletingBusy] = useState(false);
   const { register, handleSubmit, reset, setError, formState: { errors, isSubmitting } } = useForm<FormData>({ resolver: zodResolver(schema) });
   const load = useCallback(async () => { setLoading(true); try { const r = await api.get<ApiResponse<Paginated<Client>>>('/clients', { params: { page, search } }); setItems(r.data.data.items); setPageInfo(r.data.data.pagination); } catch (e) { showApiError(e); } finally { setLoading(false); } }, [page, search]);
   useEffect(() => { void load(); }, [load]);
@@ -61,7 +61,7 @@ export function ClientsPage() {
     }
   };
   const showDetails = async (client: Client) => { setViewing(client); setHistory([]); try { const r = await api.get<ApiResponse<Quote[]>>(`/clients/${client.id}/quotes`); setHistory(r.data.data); } catch (e) { showApiError(e); } };
-  const remove = async () => { if (!deleting) return; try { await api.delete(`/clients/${deleting.id}`); toast.success('Cliente excluído.'); setDeleting(null); await load(); } catch (e) { showApiError(e); } };
+  const remove = async () => { if (!deleting) return; setDeletingBusy(true); try { await api.delete(`/clients/${deleting.id}`); toast.success('Cliente excluído.'); setDeleting(null); await load(); } catch (e) { showApiError(e); } finally { setDeletingBusy(false); } };
   return <>
     <PageHeader eyebrow="Relacionamentos" title="Clientes" description="Centralize contatos e acompanhe todas as propostas de cada cliente." action={<Button variant="primary" onClick={() => openForm(null)}><Plus size={18} />Novo cliente</Button>} />
     <Surface as="section" className="overflow-hidden"><div className="border-b border-slate-100 p-4 sm:p-5"><SearchInput className="max-w-md" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} placeholder="Buscar por nome, e-mail, telefone ou empresa" /></div>
@@ -146,6 +146,6 @@ export function ClientsPage() {
         </>
       )}
     </Modal>
-    <ConfirmDialog open={Boolean(deleting)} title="Excluir cliente?" description={`Essa ação remove ${deleting?.name ?? 'o cliente'} permanentemente. Clientes com orçamentos vinculados não podem ser excluídos.`} onClose={() => setDeleting(null)} onConfirm={() => void remove()} />
+    <ConfirmDialog open={Boolean(deleting)} title="Excluir cliente?" description={`Essa ação remove ${deleting?.name ?? 'o cliente'} permanentemente. Clientes com orçamentos vinculados não podem ser excluídos.`} onClose={() => setDeleting(null)} onConfirm={() => void remove()} busy={deletingBusy} />
   </>;
 }

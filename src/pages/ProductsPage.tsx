@@ -41,7 +41,7 @@ const isKnownField = (field: string): field is KnownField => (knownFields as rea
 export function ProductsPage() {
   const [items, setItems] = useState<Product[]>([]); const [pagination, setPagination] = useState<PaginationType>({ page: 1, limit: 10, total: 0, totalPages: 0 }); const [page, setPage] = useState(1);
   const [search, setSearch] = useState(''); const [type, setType] = useState(''); const [status, setStatus] = useState(''); const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState<Product | null | undefined>(undefined); const [deleting, setDeleting] = useState<Product | null>(null);
+  const [editing, setEditing] = useState<Product | null | undefined>(undefined); const [deleting, setDeleting] = useState<Product | null>(null); const [deletingBusy, setDeletingBusy] = useState(false);
   const { register, handleSubmit, reset, setError, formState: { errors, isSubmitting } } = useForm<FormInput, unknown, FormOutput>({ resolver: zodResolver(schema), defaultValues: blank });
   const load = useCallback(async () => { setLoading(true); try { const r = await api.get<ApiResponse<Paginated<Product>>>('/products', { params: { page, search, type, status } }); setItems(r.data.data.items); setPagination(r.data.data.pagination); } catch (e) { showApiError(e); } finally { setLoading(false); } }, [page, search, type, status]);
   useEffect(() => { void load(); }, [load]);
@@ -62,7 +62,7 @@ export function ProductsPage() {
       if (!handled) showApiError(e);
     }
   };
-  const remove = async () => { if (!deleting) return; try { await api.delete(`/products/${deleting.id}`); toast.success('Item excluído.'); setDeleting(null); await load(); } catch (e) { showApiError(e); } };
+  const remove = async () => { if (!deleting) return; setDeletingBusy(true); try { await api.delete(`/products/${deleting.id}`); toast.success('Item excluído.'); setDeleting(null); await load(); } catch (e) { showApiError(e); } finally { setDeletingBusy(false); } };
   return <>
     <PageHeader eyebrow="Catálogo" title="Produtos e serviços" description="Mantenha preços organizados e monte propostas em poucos cliques." action={<Button variant="primary" onClick={() => openForm(null)}><Plus size={18} />Novo item</Button>} />
     <Surface as="section" className="overflow-hidden"><div className="grid gap-3 border-b border-slate-100 p-4 sm:grid-cols-[1fr_180px_180px] sm:p-5"><SearchInput value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} placeholder="Buscar por nome" /><Select value={type} onChange={(e) => { setType(e.target.value); setPage(1); }}><option value="">Todos os tipos</option><option value="product">Produtos</option><option value="service">Serviços</option></Select><Select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}><option value="">Todos os status</option><option value="active">Ativos</option><option value="inactive">Inativos</option></Select></div>
@@ -118,6 +118,6 @@ export function ProductsPage() {
         </div>
       </form>
     </Modal>
-    <ConfirmDialog open={Boolean(deleting)} title="Excluir item?" description={`O item “${deleting?.name ?? ''}” será removido. Se ele já tiver sido usado, desative-o para preservar o histórico.`} onClose={() => setDeleting(null)} onConfirm={() => void remove()} />
+    <ConfirmDialog open={Boolean(deleting)} title="Excluir item?" description={`O item “${deleting?.name ?? ''}” será removido. Se ele já tiver sido usado, desative-o para preservar o histórico.`} onClose={() => setDeleting(null)} onConfirm={() => void remove()} busy={deletingBusy} />
   </>;
 }
