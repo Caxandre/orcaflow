@@ -30,6 +30,12 @@ export function QuotesPage() {
   // 2ª duplicação concorrente (de outra linha) arriscaria uma segunda
   // navegação disparada depois que o usuário já saiu desta tela.
   const [duplicatingId, setDuplicatingId] = useState<number | null>(null);
+  // Por linha, não global: diferente de duplicate(), status() não navega -
+  // load() após um PATCH resolver só substitui a lista inteira, o que não
+  // conflita com outro PATCH ainda em andamento em outra linha (cada um
+  // dispara seu próprio load() quando resolver). Sem conflito real entre
+  // linhas, então cada orçamento fica independente.
+  const [updatingStatusId, setUpdatingStatusId] = useState<number | null>(null);
   const [pagination, setPagination] = useState<PaginationType>({ page: 1, limit: 10, total: 0, totalPages: 0 });
   const load = useCallback(async () => { setLoading(true); try { const r = await api.get<ApiResponse<Paginated<Quote>>>('/quotes', { params: { page, ...filters } }); setItems(r.data.data.items); setPagination(r.data.data.pagination); } catch (e) { showApiError(e); } finally { setLoading(false); } }, [page, filters]);
   useEffect(() => { void load(); }, [load]);
@@ -48,7 +54,19 @@ export function QuotesPage() {
       setDuplicatingId(null);
     }
   };
-  const status = async (quote: Quote, value: QuoteStatus) => { try { await api.patch(`/quotes/${quote.id}/status`, { status: value }); toast.success('Status atualizado.'); await load(); } catch (e) { showApiError(e); } };
+  const status = async (quote: Quote, value: QuoteStatus) => {
+    if (updatingStatusId === quote.id) return;
+    setUpdatingStatusId(quote.id);
+    try {
+      await api.patch(`/quotes/${quote.id}/status`, { status: value });
+      toast.success('Status atualizado.');
+      await load();
+    } catch (e) {
+      showApiError(e);
+    } finally {
+      setUpdatingStatusId(null);
+    }
+  };
   const pdf = async (quote: Quote, share = false) => { if (share && !quote.client_phone) return; try { const r = await api.post<ApiResponse<{ url: string }>>(`/quotes/${quote.id}/pdf`); if (share) window.open(whatsAppUrl(quote, r.data.data.url), '_blank', 'noopener,noreferrer'); else window.open(r.data.data.url, '_blank', 'noopener,noreferrer'); toast.success('PDF pronto.'); } catch (e) { showApiError(e); } };
   const remove = async () => { if (!deleting) return; setDeletingBusy(true); try { await api.delete(`/quotes/${deleting.id}`); toast.success('Orçamento excluído.'); setDeleting(null); await load(); } catch (e) { showApiError(e); } finally { setDeletingBusy(false); } };
   return <>
@@ -75,7 +93,7 @@ export function QuotesPage() {
                 <TableCell className="text-slate-500">{formatDate(quote.created_at)}</TableCell>
                 <TableCell className="text-slate-500">{formatDate(quote.valid_until)}</TableCell>
                 <TableCell className="font-semibold text-slate-800">{formatMoney(quote.total)}</TableCell>
-                <TableCell><div className="flex items-center gap-2"><StatusBadge status={quote.status} /><select className="w-7 cursor-pointer bg-transparent text-transparent outline-none" value={quote.status} onChange={(e) => void status(quote, e.target.value as QuoteStatus)} aria-label="Alterar status"><option value="draft">Rascunho</option><option value="sent">Enviado</option><option value="approved">Aprovado</option><option value="rejected">Recusado</option></select></div></TableCell>
+                <TableCell><div className="flex items-center gap-2"><StatusBadge status={quote.status} /><select className="w-7 cursor-pointer bg-transparent text-transparent outline-none" value={quote.status} onChange={(e) => void status(quote, e.target.value as QuoteStatus)} aria-label="Alterar status" disabled={updatingStatusId === quote.id}><option value="draft">Rascunho</option><option value="sent">Enviado</option><option value="approved">Aprovado</option><option value="rejected">Recusado</option></select></div></TableCell>
                 <TableCell><div className="flex justify-end gap-0.5"><Link className="rounded-lg p-2 text-slate-500 hover:bg-blue-50 hover:text-brand-600" to={`/orcamentos/${quote.id}`} aria-label="Visualizar"><Eye size={16} /></Link><Link className="rounded-lg p-2 text-slate-500 hover:bg-blue-50 hover:text-brand-600" to={`/orcamentos/${quote.id}/editar`} aria-label="Editar"><Pencil size={16} /></Link><IconButton icon={<Copy size={16} />} tone="brand" aria-label="Duplicar" onClick={() => void duplicate(quote)} disabled={duplicatingId !== null} /><IconButton icon={<Download size={16} />} tone="brand" aria-label="Gerar PDF" onClick={() => void pdf(quote)} /><IconButton icon={<MessageCircle size={16} />} tone="success" aria-label="WhatsApp" onClick={() => void pdf(quote, true)} disabled={!quote.client_phone} /><IconButton icon={<Trash2 size={16} />} tone="danger" aria-label="Excluir" onClick={() => setDeleting(quote)} /></div></TableCell>
               </TableRow>
             ))}
