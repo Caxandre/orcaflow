@@ -16,7 +16,7 @@ import { SearchInput } from '../design-system/SearchInput';
 import { Select } from '../design-system/Select';
 import { Surface } from '../design-system/Surface';
 import { Textarea } from '../design-system/Textarea';
-import { api, getApiError, showApiError } from '../services/api';
+import { api, applyApiFieldErrors, showApiError } from '../services/api';
 import type { ApiResponse, Client, Paginated, Product, Quote, QuotePayload } from '../types';
 import { formatMoney } from '../utils/format';
 
@@ -71,30 +71,24 @@ export function QuoteFormPage() {
       toast.success(id ? 'Orçamento atualizado.' : 'Orçamento criado.');
       navigate(`/orcamentos/${r.data.data.id}`);
     } catch (e) {
-      const apiError = getApiError(e);
-      if (apiError && apiError.errors.length > 0) {
-        let allKnown = true;
-        for (const fieldError of apiError.errors) {
-          if (isSimpleKnownField(fieldError.field)) {
-            setError(fieldError.field, { type: 'server', message: fieldError.message });
-            continue;
-          }
-          if (fieldError.field === 'items') {
-            setError('items', { type: 'server', message: fieldError.message });
-            continue;
-          }
-          const itemNameMatch = itemNameFieldPattern.exec(fieldError.field);
-          const itemIndex = itemNameMatch ? Number(itemNameMatch[1]) : undefined;
-          if (itemIndex !== undefined && itemIndex < fields.length) {
-            setError(`items.${itemIndex}.item_name`, { type: 'server', message: fieldError.message });
-            continue;
-          }
-          allKnown = false;
+      const handled = applyApiFieldErrors(e, (fieldError) => {
+        if (isSimpleKnownField(fieldError.field)) {
+          setError(fieldError.field, { type: 'server', message: fieldError.message });
+          return true;
         }
-        if (!allKnown) showApiError(e);
-      } else {
-        showApiError(e);
-      }
+        if (fieldError.field === 'items') {
+          setError('items', { type: 'server', message: fieldError.message });
+          return true;
+        }
+        const itemNameMatch = itemNameFieldPattern.exec(fieldError.field);
+        const itemIndex = itemNameMatch ? Number(itemNameMatch[1]) : undefined;
+        if (itemIndex !== undefined && itemIndex < fields.length) {
+          setError(`items.${itemIndex}.item_name`, { type: 'server', message: fieldError.message });
+          return true;
+        }
+        return false;
+      });
+      if (!handled) showApiError(e);
     }
   };
   if (loadStatus === 'loading') return <Loading label="Abrindo orçamento..." />;

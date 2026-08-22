@@ -19,7 +19,7 @@ import { SearchInput } from '../design-system/SearchInput';
 import { Surface } from '../design-system/Surface';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../design-system/Table';
 import { Textarea } from '../design-system/Textarea';
-import { api, getApiError, showApiError } from '../services/api';
+import { api, applyApiFieldErrors, showApiError } from '../services/api';
 import type { ApiResponse, Client, Paginated, Pagination as PaginationType, Quote } from '../types';
 import { formatDate, formatMoney, phoneDigits } from '../utils/format';
 
@@ -52,17 +52,12 @@ export function ClientsPage() {
       setEditing(undefined);
       await load();
     } catch (e) {
-      const apiError = getApiError(e);
-      if (apiError && apiError.errors.length > 0) {
-        let allKnown = true;
-        for (const fieldError of apiError.errors) {
-          if (isKnownField(fieldError.field)) setError(fieldError.field, { type: 'server', message: fieldError.message });
-          else allKnown = false;
-        }
-        if (!allKnown) showApiError(e);
-      } else {
-        showApiError(e);
-      }
+      const handled = applyApiFieldErrors(e, (fieldError) => {
+        if (!isKnownField(fieldError.field)) return false;
+        setError(fieldError.field, { type: 'server', message: fieldError.message });
+        return true;
+      });
+      if (!handled) showApiError(e);
     }
   };
   const showDetails = async (client: Client) => { setViewing(client); setHistory([]); try { const r = await api.get<ApiResponse<Quote[]>>(`/clients/${client.id}/quotes`); setHistory(r.data.data); } catch (e) { showApiError(e); } };
