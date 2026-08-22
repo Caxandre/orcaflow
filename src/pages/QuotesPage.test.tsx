@@ -223,4 +223,112 @@ describe('QuotesPage', () => {
 
     resolvePost?.();
   });
+
+  it('status: bloqueia repetição na mesma linha enquanto o PATCH está pendente', async () => {
+    const user = userEvent.setup();
+    mockGet(quote);
+    let resolvePatch: (() => void) | undefined;
+    const patchSpy = vi.spyOn(api, 'patch').mockReturnValue(
+      new Promise<AxiosResponse>((resolve) => { resolvePatch = () => resolve({} as AxiosResponse); }),
+    );
+
+    render(
+      <MemoryRouter>
+        <QuotesPage />
+      </MemoryRouter>,
+    );
+
+    const select = await screen.findByRole('combobox', { name: 'Alterar status' });
+    await user.selectOptions(select, 'sent');
+
+    expect(select).toBeDisabled();
+    // Select desabilitado não aceita nova interação pelo fluxo normal da UI;
+    // a guarda em status() também protege independentemente do disabled.
+    expect(patchSpy).toHaveBeenCalledTimes(1);
+
+    resolvePatch?.();
+  });
+
+  it('status: erro libera o select, aciona showApiError e mantém o valor persistido (sem rollback explícito necessário)', async () => {
+    const user = userEvent.setup();
+    mockGet(quote);
+    const patchSpy = vi
+      .spyOn(api, 'patch')
+      .mockRejectedValueOnce(new Error('network error'))
+      .mockResolvedValueOnce({} as AxiosResponse);
+
+    render(
+      <MemoryRouter>
+        <QuotesPage />
+      </MemoryRouter>,
+    );
+
+    const select = await screen.findByRole('combobox', { name: 'Alterar status' });
+    await user.selectOptions(select, 'sent');
+
+    await waitFor(() => expect(select).toBeEnabled());
+    expect(patchSpy).toHaveBeenCalledTimes(1);
+    expect(select).toHaveValue('draft');
+
+    // Nova tentativa possível após a liberação.
+    await user.selectOptions(select, 'sent');
+    await waitFor(() => expect(patchSpy).toHaveBeenCalledTimes(2));
+  });
+
+  it('status: em sucesso, recarrega a lista e reflete o status atualizado', async () => {
+    const user = userEvent.setup();
+    const getSpy = mockGet(quote);
+    vi.spyOn(api, 'patch').mockResolvedValueOnce({} as AxiosResponse);
+
+    render(
+      <MemoryRouter>
+        <QuotesPage />
+      </MemoryRouter>,
+    );
+
+    const select = await screen.findByRole('combobox', { name: 'Alterar status' });
+    getSpy.mockResolvedValue({ data: { data: { items: [{ ...quote, status: 'sent' }], pagination } } } as AxiosResponse<
+      ApiResponse<Paginated<Quote>>
+    >);
+
+    await user.selectOptions(select, 'sent');
+
+    await waitFor(() => expect(select).toHaveValue('sent'));
+  });
+
+  it('status: linhas independentes - A ocupado não desabilita o select de B', async () => {
+    const user = userEvent.setup();
+    const quoteB: Quote = { ...quote, id: 8, quote_number: 'ORC-0008' };
+    vi.spyOn(api, 'get').mockImplementation(((url: string) => {
+      if (url === '/quotes') {
+        return Promise.resolve({ data: { data: { items: [quote, quoteB], pagination } } } as AxiosResponse<
+          ApiResponse<Paginated<Quote>>
+        >);
+      }
+      if (url === '/clients') {
+        return Promise.resolve({ data: { data: { items: [] as Client[], pagination } } } as AxiosResponse<ApiResponse<Paginated<Client>>>);
+      }
+      return Promise.reject(new Error('unexpected url'));
+    }) as typeof api.get);
+    let resolvePatch: (() => void) | undefined;
+    vi.spyOn(api, 'patch').mockReturnValue(
+      new Promise<AxiosResponse>((resolve) => { resolvePatch = () => resolve({} as AxiosResponse); }),
+    );
+
+    render(
+      <MemoryRouter>
+        <QuotesPage />
+      </MemoryRouter>,
+    );
+
+    const selects = await screen.findAllByRole('combobox', { name: 'Alterar status' });
+    expect(selects).toHaveLength(2);
+
+    await user.selectOptions(selects[0], 'sent');
+
+    expect(selects[0]).toBeDisabled();
+    expect(selects[1]).toBeEnabled();
+
+    resolvePatch?.();
+  });
 });
