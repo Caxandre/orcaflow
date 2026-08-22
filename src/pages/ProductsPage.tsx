@@ -21,7 +21,7 @@ import { Select } from '../design-system/Select';
 import { Surface } from '../design-system/Surface';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../design-system/Table';
 import { Textarea } from '../design-system/Textarea';
-import { api, getApiError, showApiError } from '../services/api';
+import { api, applyApiFieldErrors, showApiError } from '../services/api';
 import type { ApiResponse, Paginated, Pagination as PaginationType, Product } from '../types';
 import { formatMoney } from '../utils/format';
 
@@ -54,17 +54,12 @@ export function ProductsPage() {
       setEditing(undefined);
       await load();
     } catch (e) {
-      const apiError = getApiError(e);
-      if (apiError && apiError.errors.length > 0) {
-        let allKnown = true;
-        for (const fieldError of apiError.errors) {
-          if (isKnownField(fieldError.field)) setError(fieldError.field, { type: 'server', message: fieldError.message });
-          else allKnown = false;
-        }
-        if (!allKnown) showApiError(e);
-      } else {
-        showApiError(e);
-      }
+      const handled = applyApiFieldErrors(e, (fieldError) => {
+        if (!isKnownField(fieldError.field)) return false;
+        setError(fieldError.field, { type: 'server', message: fieldError.message });
+        return true;
+      });
+      if (!handled) showApiError(e);
     }
   };
   const remove = async () => { if (!deleting) return; try { await api.delete(`/products/${deleting.id}`); toast.success('Item excluído.'); setDeleting(null); await load(); } catch (e) { showApiError(e); } };

@@ -1,6 +1,6 @@
 import axios, { AxiosError } from 'axios';
 import { toast } from 'sonner';
-import type { ApiError } from '../types';
+import type { ApiError, ApiFieldError } from '../types';
 
 export const TOKEN_KEY = 'crm_orcamentos_token';
 export const api = axios.create({ baseURL: import.meta.env.VITE_API_URL ?? 'http://localhost:3000/api', timeout: 20000 });
@@ -40,4 +40,20 @@ export const getApiError = (error: unknown): ApiError | undefined => {
   if (!axios.isAxiosError(error)) return undefined;
   const data = error.response?.data;
   return isApiError(data) ? data : undefined;
+};
+
+// Parte comum extraída de ClientsPage/ProductsPage/QuoteFormPage: reconhecer
+// o erro, percorrer `errors` e agregar um booleano — nada além disso. Não
+// conhece React Hook Form, campos de nenhum formulário, nem decide toast:
+// quem chama define `applyFieldError` (que decide se consegue apresentar
+// aquele erro, tipicamente chamando `setError`) e decide o que fazer quando
+// o retorno é `false` (tipicamente `showApiError`).
+export const applyApiFieldErrors = (error: unknown, applyFieldError: (fieldError: ApiFieldError) => boolean): boolean => {
+  const apiError = getApiError(error);
+  if (!apiError || apiError.errors.length === 0) return false;
+  let allHandled = true;
+  for (const fieldError of apiError.errors) {
+    if (!applyFieldError(fieldError)) allHandled = false;
+  }
+  return allHandled;
 };
