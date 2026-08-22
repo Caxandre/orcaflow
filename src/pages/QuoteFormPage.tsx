@@ -16,7 +16,7 @@ import { SearchInput } from '../design-system/SearchInput';
 import { Select } from '../design-system/Select';
 import { Surface } from '../design-system/Surface';
 import { Textarea } from '../design-system/Textarea';
-import { api, showApiError } from '../services/api';
+import { api, getApiError, showApiError } from '../services/api';
 import type { ApiResponse, Client, Paginated, Product, Quote, QuotePayload } from '../types';
 import { formatMoney } from '../utils/format';
 
@@ -26,10 +26,22 @@ type FormData = z.infer<typeof schema>;
 const futureDate = () => new Date(Date.now() + 15 * 86400000).toISOString().slice(0, 10);
 const blank: FormData = { client_id: 0, status: 'draft', discount_type: 'fixed', discount_value: 0, notes: '', valid_until: futureDate(), items: [] };
 
+// Só client_id/discount_value/valid_until têm apresentação visual de erro
+// hoje (único trio de FormField que recebe `error=` entre os campos
+// simples). status/discount_type/notes não têm nenhuma superfície visual —
+// ver relatório da tarefa. `items` (erro de array vazio) e
+// `items.N.item_name` (único campo de item com `error=`) recebem
+// tratamento especial abaixo; product_id/item_description/quantity/
+// unit_price de item não têm superfície visual e caem no fallback global.
+const simpleKnownFields = ['client_id', 'discount_value', 'valid_until'] as const;
+type SimpleKnownField = (typeof simpleKnownFields)[number];
+const isSimpleKnownField = (field: string): field is SimpleKnownField => (simpleKnownFields as readonly string[]).includes(field);
+const itemNameFieldPattern = /^items\.(\d+)\.item_name$/;
+
 export function QuoteFormPage() {
   const { id } = useParams(); const navigate = useNavigate(); const [clients, setClients] = useState<Client[]>([]); const [products, setProducts] = useState<Product[]>([]); const [clientSearch, setClientSearch] = useState(''); const [productSearch, setProductSearch] = useState('');
   const [loadStatus, setLoadStatus] = useState<'loading' | 'success' | 'error'>(id ? 'loading' : 'success');
-  const { control, register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<FormData>({ resolver: zodResolver(schema), defaultValues: blank });
+  const { control, register, handleSubmit, reset, setError, formState: { errors, isSubmitting } } = useForm<FormData>({ resolver: zodResolver(schema), defaultValues: blank });
   const { fields, append, remove } = useFieldArray({ control, name: 'items' });
   const values = useWatch({ control });
   useEffect(() => { Promise.all([api.get<ApiResponse<Paginated<Client>>>('/clients', { params: { limit: 100 } }), api.get<ApiResponse<Paginated<Product>>>('/products', { params: { limit: 100, status: 'active' } })]).then(([c, p]) => { setClients(c.data.data.items); setProducts(p.data.data.items); }).catch((e) => showApiError(e)); }, []);
@@ -47,7 +59,44 @@ export function QuoteFormPage() {
   const filteredClients = clients.filter((c) => `${c.name} ${c.company ?? ''}`.toLowerCase().includes(clientSearch.toLowerCase()));
   const filteredProducts = products.filter((p) => p.name.toLowerCase().includes(productSearch.toLowerCase()));
   const addProduct = (product: Product) => append({ product_id: product.id, item_name: product.name, item_description: product.description ?? '', quantity: 1, unit_price: Number(product.unit_price) });
-  const submit = async (data: FormData) => { try { const payload: QuotePayload = { ...data, notes: data.notes || null }; const r = id ? await api.put<ApiResponse<Quote>>(`/quotes/${id}`, payload) : await api.post<ApiResponse<Quote>>('/quotes', payload); toast.success(id ? 'Orçamento atualizado.' : 'Orçamento criado.'); navigate(`/orcamentos/${r.data.data.id}`); } catch (e) { showApiError(e); } };
+  // Validação local (Zod `.min(1)`) aninha a mensagem em `errors.items.root`
+  // (convenção do resolver do RHF para erro de array sem índice); o erro de
+  // backend, aplicado via `setError('items', ...)`, fica em `errors.items`
+  // diretamente. Mesma superfície visual cobre os dois casos.
+  const itemsRootError = errors.items?.root?.message ?? errors.items?.message;
+  const submit = async (data: FormData) => {
+    try {
+      const payload: QuotePayload = { ...data, notes: data.notes || null };
+      const r = id ? await api.put<ApiResponse<Quote>>(`/quotes/${id}`, payload) : await api.post<ApiResponse<Quote>>('/quotes', payload);
+      toast.success(id ? 'Orçamento atualizado.' : 'Orçamento criado.');
+      navigate(`/orcamentos/${r.data.data.id}`);
+    } catch (e) {
+      const apiError = getApiError(e);
+      if (apiError && apiError.errors.length > 0) {
+        let allKnown = true;
+        for (const fieldError of apiError.errors) {
+          if (isSimpleKnownField(fieldError.field)) {
+            setError(fieldError.field, { type: 'server', message: fieldError.message });
+            continue;
+          }
+          if (fieldError.field === 'items') {
+            setError('items', { type: 'server', message: fieldError.message });
+            continue;
+          }
+          const itemNameMatch = itemNameFieldPattern.exec(fieldError.field);
+          const itemIndex = itemNameMatch ? Number(itemNameMatch[1]) : undefined;
+          if (itemIndex !== undefined && itemIndex < fields.length) {
+            setError(`items.${itemIndex}.item_name`, { type: 'server', message: fieldError.message });
+            continue;
+          }
+          allKnown = false;
+        }
+        if (!allKnown) showApiError(e);
+      } else {
+        showApiError(e);
+      }
+    }
+  };
   if (loadStatus === 'loading') return <Loading label="Abrindo orçamento..." />;
   if (loadStatus === 'error') return <div className="grid min-h-64 place-items-center px-6 text-center"><div><h3 className="font-semibold text-slate-800">Não foi possível carregar o orçamento para edição.</h3><p className="mt-1 text-sm text-slate-500">Tente novamente em alguns instantes.</p><div className="mt-4"><Button variant="primary" onClick={loadQuoteForEdit}>Tentar novamente</Button></div></div></div>;
   return <>
@@ -55,7 +104,7 @@ export function QuoteFormPage() {
     <form onSubmit={handleSubmit(submit)} className="grid gap-5 xl:grid-cols-[1fr_340px]">
       <div className="space-y-5"><Surface as="section" className="p-5 sm:p-6"><h2 className="font-semibold text-navy">1. Cliente e condições</h2><div className="mt-5 grid gap-4 sm:grid-cols-2"><FormField className="sm:col-span-2" label="Buscar cliente"><SearchInput value={clientSearch} onChange={(e) => setClientSearch(e.target.value)} placeholder="Nome ou empresa" /></FormField><FormField label="Cliente" error={errors.client_id?.message}><Select {...register('client_id', { valueAsNumber: true })}><option value={0}>Selecione...</option>{filteredClients.map((client) => <option key={client.id} value={client.id}>{client.name}{client.company ? ` — ${client.company}` : ''}</option>)}</Select></FormField><FormField label="Validade" error={errors.valid_until?.message}><Input type="date" {...register('valid_until')} /></FormField><FormField label="Status"><Select {...register('status')}><option value="draft">Rascunho</option><option value="sent">Enviado</option><option value="approved">Aprovado</option><option value="rejected">Recusado</option></Select></FormField></div></Surface>
         <Surface as="section" className="p-5 sm:p-6"><div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><h2 className="font-semibold text-navy">2. Itens da proposta</h2><p className="mt-1 text-sm text-slate-500">Escolha no catálogo ou adicione um item personalizado.</p></div><Button type="button" variant="secondary" onClick={() => append({ product_id: null, item_name: '', item_description: '', quantity: 1, unit_price: 0 })}><Plus size={17} />Item personalizado</Button></div><div className="mt-5 rounded-xl bg-slate-50 p-4"><SearchInput placeholder="Pesquisar no catálogo" value={productSearch} onChange={(e) => setProductSearch(e.target.value)} />{productSearch && <div className="mt-2 max-h-44 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-lg">{filteredProducts.slice(0, 8).map((product) => <button type="button" key={product.id} onClick={() => { addProduct(product); setProductSearch(''); }} className="flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left hover:bg-blue-50"><span><strong className="block text-sm text-slate-700">{product.name}</strong><small className="text-slate-400">{product.type === 'service' ? 'Serviço' : 'Produto'}</small></span><span className="text-sm font-semibold text-brand-700">{formatMoney(product.unit_price)}</span></button>)}</div>}</div>
-          {errors.items?.root && <FieldError className="mt-3">{errors.items.root.message}</FieldError>}<div className="mt-5 space-y-3">{fields.length === 0 && <div className="rounded-xl border border-dashed border-slate-300 px-5 py-10 text-center text-sm text-slate-400">Pesquise no catálogo ou crie um item personalizado.</div>}{fields.map((field, index) => <div className="rounded-xl border border-slate-200 p-4" key={field.id}><div className="grid gap-3 sm:grid-cols-[1fr_90px_150px_42px]"><FormField label="Item" error={errors.items?.[index]?.item_name?.message}><Input {...register(`items.${index}.item_name`)} /></FormField><FormField label="Qtd."><Input type="number" step="0.001" min="0.001" {...register(`items.${index}.quantity`, { valueAsNumber: true })} /></FormField><FormField label="Preço unitário"><Input type="number" step="0.01" min="0" {...register(`items.${index}.unit_price`, { valueAsNumber: true })} /></FormField><button type="button" className="mt-7 grid size-10 place-items-center rounded-xl text-slate-400 hover:bg-red-50 hover:text-red-600" onClick={() => remove(index)} aria-label="Remover item"><Trash2 size={17} /></button><FormField className="sm:col-span-4" label="Descrição"><Input {...register(`items.${index}.item_description`)} /></FormField></div><p className="mt-3 text-right text-sm text-slate-500">Total do item: <strong className="text-slate-800">{formatMoney((Number(values.items?.[index]?.quantity) || 0) * (Number(values.items?.[index]?.unit_price) || 0))}</strong></p></div>)}</div>
+          {itemsRootError && <FieldError className="mt-3">{itemsRootError}</FieldError>}<div className="mt-5 space-y-3">{fields.length === 0 && <div className="rounded-xl border border-dashed border-slate-300 px-5 py-10 text-center text-sm text-slate-400">Pesquise no catálogo ou crie um item personalizado.</div>}{fields.map((field, index) => <div className="rounded-xl border border-slate-200 p-4" key={field.id}><div className="grid gap-3 sm:grid-cols-[1fr_90px_150px_42px]"><FormField label="Item" error={errors.items?.[index]?.item_name?.message}><Input {...register(`items.${index}.item_name`)} /></FormField><FormField label="Qtd."><Input type="number" step="0.001" min="0.001" {...register(`items.${index}.quantity`, { valueAsNumber: true })} /></FormField><FormField label="Preço unitário"><Input type="number" step="0.01" min="0" {...register(`items.${index}.unit_price`, { valueAsNumber: true })} /></FormField><button type="button" className="mt-7 grid size-10 place-items-center rounded-xl text-slate-400 hover:bg-red-50 hover:text-red-600" onClick={() => remove(index)} aria-label="Remover item"><Trash2 size={17} /></button><FormField className="sm:col-span-4" label="Descrição"><Input {...register(`items.${index}.item_description`)} /></FormField></div><p className="mt-3 text-right text-sm text-slate-500">Total do item: <strong className="text-slate-800">{formatMoney((Number(values.items?.[index]?.quantity) || 0) * (Number(values.items?.[index]?.unit_price) || 0))}</strong></p></div>)}</div>
         </Surface>
         <Surface as="section" className="p-5 sm:p-6"><h2 className="font-semibold text-navy">3. Mensagem e observações</h2><Textarea className="mt-4 min-h-32 py-3" placeholder="Condições comerciais, prazo de execução, formas de pagamento..." {...register('notes')} /></Surface></div>
       <aside className="xl:sticky xl:top-24 xl:self-start"><Surface as="section" className="overflow-hidden"><div className="bg-navy p-5 text-white"><div className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-xl bg-white/10 text-orange-300"><Calculator size={20} /></span><div><h2 className="font-semibold">Resumo financeiro</h2><p className="text-xs text-blue-200">Atualizado em tempo real</p></div></div></div><div className="p-5"><div className="flex justify-between text-sm text-slate-500"><span>Subtotal</span><strong className="text-slate-800">{formatMoney(subtotal)}</strong></div><div className="mt-5 grid grid-cols-[1fr_1.2fr] gap-3"><FormField label="Desconto"><Select {...register('discount_type')}><option value="fixed">R$</option><option value="percentage">%</option></Select></FormField><FormField label="Valor" error={errors.discount_value?.message}><Input type="number" min="0" step="0.01" {...register('discount_value', { valueAsNumber: true })} /></FormField></div><div className="mt-4 flex justify-between border-b border-slate-100 pb-5 text-sm text-slate-500"><span>Desconto aplicado</span><strong className="text-red-600">- {formatMoney(Math.min(subtotal, discount))}</strong></div><div className="flex items-end justify-between py-6"><span className="font-semibold text-navy">Total</span><strong className="text-2xl text-brand-700">{formatMoney(total)}</strong></div><Button variant="primary" className="w-full py-3" disabled={isSubmitting}><Save size={18} />{isSubmitting ? 'Salvando...' : id ? 'Salvar alterações' : 'Criar orçamento'}</Button><p className="mt-3 text-center text-xs leading-5 text-slate-400">Os valores serão recalculados e validados antes de salvar.</p></div></Surface></aside>
